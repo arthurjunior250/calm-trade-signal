@@ -34,10 +34,8 @@ import {
   appendHistory,
   clearHistory,
   getActiveSignal,
-  getApiKey,
   getHistory,
   setActiveSignal,
-  setApiKey,
 } from "@/lib/signal-storage";
 
 export const Route = createFileRoute("/")({
@@ -88,14 +86,12 @@ function useCountdown(target: number | null) {
 }
 
 function SignalPage() {
-  const [apiKey, setApiKeyState] = useState("");
   const [pair, setPair] = useState<PairValue>("EUR/USD");
   const [signal, setSignal] = useState<GeneratedSignal | null>(null);
   const [history, setHistory] = useState<GeneratedSignal[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    setApiKeyState(getApiKey());
     setHistory(getHistory());
   }, []);
 
@@ -114,10 +110,6 @@ function SignalPage() {
   }, [countdown, signal]);
 
   async function handleGenerate() {
-    if (!apiKey.trim()) {
-      toast.error("Add your Twelve Data API key first");
-      return;
-    }
     const existing = getActiveSignal(pair);
     if (existing) {
       setSignal(existing);
@@ -126,10 +118,10 @@ function SignalPage() {
     }
     setLoading(true);
     try {
-      const candles = await fetchH1Candles(pair, apiKey.trim());
+      const candles = await fetchH1Candles(pair);
       if (candles.length < 210) {
         throw new Error(
-          `Not enough closed candles (got ${candles.length}, need 210+). Check your API plan.`,
+          `Not enough closed candles (got ${candles.length}, need 210+).`,
         );
       }
       const sig = generateSignal(pair, candles);
@@ -144,11 +136,6 @@ function SignalPage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function handleSaveKey(value: string) {
-    setApiKeyState(value);
-    setApiKey(value);
   }
 
   function handleClearHistory() {
@@ -216,28 +203,9 @@ function SignalPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="apikey">Twelve Data API key</Label>
-                <Input
-                  id="apikey"
-                  type="password"
-                  placeholder="Paste your free API key"
-                  value={apiKey}
-                  onChange={(e) => handleSaveKey(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Stored only in your browser. Get a free key at{" "}
-                  <a
-                    href="https://twelvedata.com/"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-primary underline-offset-4 hover:underline"
-                  >
-                    twelvedata.com
-                  </a>
-                  .
-                </p>
-              </div>
+              <p className="text-xs text-muted-foreground">
+                Live H1 candles from Yahoo Finance. No API key required.
+              </p>
             </CardContent>
           </Card>
 
