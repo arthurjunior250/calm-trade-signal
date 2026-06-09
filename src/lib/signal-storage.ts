@@ -2,7 +2,7 @@ import type { GeneratedSignal } from "./signal-engine";
 
 const ACTIVE_KEY = "tab.active-signals.v1"; // map of pair -> signal
 const HISTORY_KEY = "tab.signal-history.v1";
-const API_KEY = "tab.tdkey.v1";
+
 
 type ActiveMap = Record<string, GeneratedSignal>;
 
@@ -57,12 +57,3 @@ export function clearHistory() {
   writeJSON(HISTORY_KEY, []);
 }
 
-export function getApiKey(): string {
-  if (typeof localStorage === "undefined") return "";
-  return localStorage.getItem(API_KEY) ?? "";
-}
-
-export function setApiKey(key: string) {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(API_KEY, key);
-}
