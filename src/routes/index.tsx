@@ -174,6 +174,7 @@ function SignalPage() {
             loading={loading}
             onGenerate={handleGenerate}
           />
+          {signal && <VoteTallyCard signal={signal} />}
           {signal && <TimeframesCard signal={signal} />}
         </div>
 
