@@ -592,3 +592,108 @@ function HistoryCard({
     </Card>
   );
 }
+
+function EdgeScoreCard({ signal }: { signal: GeneratedSignal }) {
+  const { edge } = signal;
+  const decisionColor =
+    signal.decision === "BUY"
+      ? "text-primary"
+      : signal.decision === "SELL"
+        ? "text-destructive"
+        : "text-muted-foreground";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Edge Score breakdown</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Combined confidence from 5 weighted market factors — no single indicator decides.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase text-muted-foreground">
+              <tr className="border-b border-border/60">
+                <th className="py-2 text-left font-medium">Factor</th>
+                <th className="py-2 text-left font-medium">Bias</th>
+                <th className="py-2 text-right font-medium">Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {edge.components.map((c) => {
+                const pct = (c.score / c.weight) * 100;
+                const biasColor =
+                  c.side === "bull"
+                    ? "text-primary"
+                    : c.side === "bear"
+                      ? "text-destructive"
+                      : "text-muted-foreground";
+                const biasLabel =
+                  c.side === "bull" ? "Bullish" : c.side === "bear" ? "Bearish" : "Neutral";
+                return (
+                  <tr key={c.name} className="border-b border-border/30 align-top">
+                    <td className="py-2">
+                      <div className="font-medium">{c.name}</div>
+                      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
+                        {c.reasons.map((r, i) => (
+                          <li key={i}>{r}</li>
+                        ))}
+                      </ul>
+                    </td>
+                    <td className={`py-2 ${biasColor}`}>{biasLabel}</td>
+                    <td className="py-2 text-right font-mono tabular-nums">
+                      <div>
+                        {c.score}/{c.weight}
+                      </div>
+                      <div className="mt-1 h-1 w-16 overflow-hidden rounded bg-muted">
+                        <div
+                          className={`h-full ${
+                            c.side === "bull"
+                              ? "bg-primary"
+                              : c.side === "bear"
+                                ? "bg-destructive"
+                                : "bg-muted-foreground/60"
+                          }`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td className="pt-3 font-semibold">Total Edge Score</td>
+                <td className={`pt-3 font-semibold ${decisionColor}`}>{signal.decision}</td>
+                <td className="pt-3 text-right font-mono text-base font-semibold tabular-nums">
+                  {edge.total}/100
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div className="grid grid-cols-3 gap-3 text-xs">
+          <div className="rounded-md bg-primary/10 p-2 text-center">
+            <div className="text-muted-foreground">Bull points</div>
+            <div className="mt-1 font-mono text-base font-semibold text-primary">{edge.bullPoints}</div>
+          </div>
+          <div className="rounded-md bg-destructive/10 p-2 text-center">
+            <div className="text-muted-foreground">Bear points</div>
+            <div className="mt-1 font-mono text-base font-semibold text-destructive">{edge.bearPoints}</div>
+          </div>
+          <div className="rounded-md bg-muted/50 p-2 text-center">
+            <div className="text-muted-foreground">Confidence</div>
+            <div className="mt-1 text-base font-semibold">{signal.confidenceLabel}</div>
+          </div>
+        </div>
+        {signal.decision === "HOLD" && (
+          <p className="rounded-md border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
+            Edge score below 55 or no dominant side — staying out is the trade.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
