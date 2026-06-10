@@ -285,9 +285,8 @@ function SignalCard({
                     {signal.decision}
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">
-                    Confidence {signal.confidence}% · Score{" "}
-                    {signal.totalScore >= 0 ? "+" : ""}
-                    {signal.totalScore.toFixed(1)}
+                    Edge Score {signal.confidence}/100 · {signal.confidenceLabel} confidence ·{" "}
+                    {signal.edge.trendLabel}
                   </div>
                 </div>
               </div>
