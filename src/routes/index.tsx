@@ -429,7 +429,108 @@ function TimeframesCard({ signal }: { signal: GeneratedSignal }) {
   );
 }
 
-function HistoryCard({
+function VoteTallyCard({ signal }: { signal: GeneratedSignal }) {
+  const buyRows = signal.timeframes.filter((t) => t.bias === 1);
+  const sellRows = signal.timeframes.filter((t) => t.bias === -1);
+  const neutralRows = signal.timeframes.filter((t) => t.bias === 0);
+
+  const buyScore = buyRows.reduce((a, t) => a + t.score, 0);
+  const sellScore = Math.abs(sellRows.reduce((a, t) => a + t.score, 0));
+  const buyWeight = buyRows.reduce((a, t) => a + t.weight, 0);
+  const sellWeight = sellRows.reduce((a, t) => a + t.weight, 0);
+
+  const winner: "BUY" | "SELL" | "TIE" =
+    buyScore > sellScore ? "BUY" : sellScore > buyScore ? "SELL" : "TIE";
+  const diff = Math.abs(buyScore - sellScore);
+  const priority =
+    winner === "TIE"
+      ? "No clear edge — HOLD"
+      : diff >= 25
+        ? `${winner} has STRONG priority`
+        : diff >= 10
+          ? `${winner} has moderate priority`
+          : `${winner} has slight edge`;
+
+  const tfList = (rows: TimeframeAnalysis[]) =>
+    rows.length ? rows.map((r) => r.tf).join(", ") : "—";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Buy vs Sell priority</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase text-muted-foreground">
+              <tr className="border-b border-border/60">
+                <th className="py-2 text-left font-medium">Side</th>
+                <th className="py-2 text-left font-medium">Timeframes</th>
+                <th className="py-2 text-right font-medium">Votes</th>
+                <th className="py-2 text-right font-medium">Weight</th>
+                <th className="py-2 text-right font-medium">Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-border/30">
+                <td className="py-2 font-semibold text-primary">BUY</td>
+                <td className="py-2 text-muted-foreground">{tfList(buyRows)}</td>
+                <td className="py-2 text-right font-mono tabular-nums">{buyRows.length}</td>
+                <td className="py-2 text-right font-mono tabular-nums">{buyWeight}</td>
+                <td className="py-2 text-right font-mono tabular-nums text-primary">
+                  +{buyScore.toFixed(1)}
+                </td>
+              </tr>
+              <tr className="border-b border-border/30">
+                <td className="py-2 font-semibold text-destructive">SELL</td>
+                <td className="py-2 text-muted-foreground">{tfList(sellRows)}</td>
+                <td className="py-2 text-right font-mono tabular-nums">{sellRows.length}</td>
+                <td className="py-2 text-right font-mono tabular-nums">{sellWeight}</td>
+                <td className="py-2 text-right font-mono tabular-nums text-destructive">
+                  -{sellScore.toFixed(1)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-2 font-semibold text-muted-foreground">NEUTRAL</td>
+                <td className="py-2 text-muted-foreground">{tfList(neutralRows)}</td>
+                <td className="py-2 text-right font-mono tabular-nums">{neutralRows.length}</td>
+                <td className="py-2 text-right font-mono tabular-nums">
+                  {neutralRows.reduce((a, t) => a + t.weight, 0)}
+                </td>
+                <td className="py-2 text-right font-mono tabular-nums text-muted-foreground">
+                  0.0
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div className="flex items-center justify-between rounded-md bg-muted/50 p-3">
+          <div>
+            <div className="text-xs uppercase text-muted-foreground">Priority verdict</div>
+            <div
+              className={`mt-1 text-sm font-semibold ${
+                winner === "BUY"
+                  ? "text-primary"
+                  : winner === "SELL"
+                    ? "text-destructive"
+                    : "text-muted-foreground"
+              }`}
+            >
+              {priority}
+            </div>
+          </div>
+          <div className="text-right text-xs text-muted-foreground">
+            <div>Δ score</div>
+            <div className="font-mono text-base text-foreground tabular-nums">
+              {diff.toFixed(1)}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
   history,
   onClear,
 }: {
