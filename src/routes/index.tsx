@@ -28,6 +28,7 @@ import {
   LOCK_DURATION_MS,
   generateSignal,
   type GeneratedSignal,
+  type TimeframeAnalysis,
 } from "@/lib/signal-engine";
 import {
   appendHistory,
