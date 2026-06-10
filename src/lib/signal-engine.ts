@@ -4,256 +4,166 @@ import {
   rsi,
   macd,
   atr,
-  recentSupportResistance,
 } from "./indicators";
+import type { Timeframe, TimeframeCandles } from "./market-data";
 
 export type Decision = "BUY" | "SELL" | "HOLD";
 
-export interface IndicatorSnapshot {
+const LOCK_MS = 10 * 60 * 1000;
+export const LOCK_DURATION_MS = LOCK_MS;
+
+// Weight per timeframe (sum = 100). Higher TFs dominate, but lower TFs still vote.
+const TF_WEIGHT: Record<Timeframe, number> = {
+  MN: 5,
+  W1: 8,
+  D1: 12,
+  H4: 15,
+  H1: 20,
+  M30: 15,
+  M15: 15,
+  M1: 10,
+};
+
+export interface TimeframeAnalysis {
+  tf: Timeframe;
+  weight: number;
+  bias: -1 | 0 | 1; // overall direction
+  strength: number; // 0..1 (agreement among indicators)
+  score: number; // weight * bias * strength (signed)
+  close: number;
   ema20: number | null;
   ema50: number | null;
-  ema200: number | null;
   rsi: number | null;
-  macd: { macd: number; signal: number; histogram: number; prevHistogram: number } | null;
-  atr: number | null;
-  support: number | null;
-  resistance: number | null;
-  lastClose: number;
-  lastCandleTime: number;
-}
-
-export interface SignalReasoning {
-  label: string;
-  weight: number; // positive => bullish, negative => bearish
-  detail: string;
+  macdHist: number | null;
+  note: string;
 }
 
 export interface GeneratedSignal {
   pair: string;
-  timeframe: "1h";
   decision: Decision;
   confidence: number; // 0..100
   entry: number;
   stopLoss: number;
   takeProfit: number;
   riskReward: number;
-  generatedAt: number; // unix ms (signal-bar close time)
-  expiresAt: number; // generatedAt + 30 min
-  basedOnCandleTime: number; // unix sec of the last closed H1 candle
-  indicators: IndicatorSnapshot;
-  reasoning: SignalReasoning[];
+  generatedAt: number;
+  expiresAt: number;
+  timeframes: TimeframeAnalysis[];
+  totalScore: number; // -100..100
 }
 
-const LOCK_MS = 30 * 60 * 1000;
+function analyzeOneTf(tf: Timeframe, weight: number, candles: Candle[]): TimeframeAnalysis {
+  const closes = candles.map((c) => c.close);
+  const last = closes[closes.length - 1] ?? 0;
+  const e20 = ema(closes, 20);
+  const e50 = ema(closes, 50);
+  const r = rsi(closes, 14);
+  const m = macd(closes);
 
-export function analyzeCandles(closed: Candle[]): IndicatorSnapshot {
-  const closes = closed.map((c) => c.close);
-  const sr = recentSupportResistance(closed, 20);
+  if (!candles.length) {
+    return {
+      tf,
+      weight,
+      bias: 0,
+      strength: 0,
+      score: 0,
+      close: 0,
+      ema20: null,
+      ema50: null,
+      rsi: null,
+      macdHist: null,
+      note: "No data",
+    };
+  }
+
+  // Vote system: each indicator votes -1 / 0 / +1
+  const votes: number[] = [];
+  // Trend
+  if (e20 != null && e50 != null) {
+    if (last > e20 && e20 > e50) votes.push(1);
+    else if (last < e20 && e20 < e50) votes.push(-1);
+    else votes.push(0);
+  }
+  // RSI
+  if (r != null) {
+    if (r > 55 && r < 75) votes.push(1);
+    else if (r < 45 && r > 25) votes.push(-1);
+    else votes.push(0);
+  }
+  // MACD histogram
+  if (m) {
+    if (m.histogram > 0) votes.push(1);
+    else if (m.histogram < 0) votes.push(-1);
+    else votes.push(0);
+  }
+
+  let bias: -1 | 0 | 1 = 0;
+  let strength = 0;
+  if (votes.length) {
+    const sum = votes.reduce((a, b) => a + b, 0);
+    const avg = sum / votes.length; // -1..1
+    if (avg > 0.2) bias = 1;
+    else if (avg < -0.2) bias = -1;
+    strength = Math.abs(avg);
+  }
+  const score = weight * bias * strength;
+  const note = bias === 1 ? "Bullish" : bias === -1 ? "Bearish" : "Neutral";
+
   return {
-    ema20: ema(closes, 20),
-    ema50: ema(closes, 50),
-    ema200: ema(closes, 200),
-    rsi: rsi(closes, 14),
-    macd: macd(closes),
-    atr: atr(closed, 14),
-    support: sr?.support ?? null,
-    resistance: sr?.resistance ?? null,
-    lastClose: closes[closes.length - 1],
-    lastCandleTime: closed[closed.length - 1].time,
+    tf,
+    weight,
+    bias,
+    strength,
+    score,
+    close: last,
+    ema20: e20,
+    ema50: e50,
+    rsi: r,
+    macdHist: m?.histogram ?? null,
+    note,
   };
 }
 
-export function generateSignal(pair: string, closed: Candle[]): GeneratedSignal {
-  const ind = analyzeCandles(closed);
-  const reasoning: SignalReasoning[] = [];
+export function generateSignal(
+  pair: string,
+  data: TimeframeCandles,
+): GeneratedSignal {
+  const timeframes: TimeframeAnalysis[] = (Object.keys(TF_WEIGHT) as Timeframe[]).map(
+    (tf) => analyzeOneTf(tf, TF_WEIGHT[tf], data[tf] ?? []),
+  );
 
-  // Scoring system (weights roughly proportional to the spec)
-  // Trend: 30, Momentum (RSI + MACD): 25 + 15, S/R: 15, Pattern: 15
-  let score = 0;
-
-  // Trend via EMA stack
-  if (ind.ema50 != null && ind.ema200 != null) {
-    if (ind.ema50 > ind.ema200 && ind.lastClose > ind.ema50) {
-      score += 30;
-      reasoning.push({
-        label: "Trend",
-        weight: 30,
-        detail: "Price above EMA50, EMA50 above EMA200 (bullish stack)",
-      });
-    } else if (ind.ema50 < ind.ema200 && ind.lastClose < ind.ema50) {
-      score -= 30;
-      reasoning.push({
-        label: "Trend",
-        weight: -30,
-        detail: "Price below EMA50, EMA50 below EMA200 (bearish stack)",
-      });
-    } else {
-      reasoning.push({
-        label: "Trend",
-        weight: 0,
-        detail: "EMA stack mixed — no clear trend",
-      });
-    }
-  }
-
-  // RSI momentum
-  if (ind.rsi != null) {
-    if (ind.rsi > 55 && ind.rsi < 70) {
-      score += 15;
-      reasoning.push({
-        label: "RSI",
-        weight: 15,
-        detail: `RSI ${ind.rsi.toFixed(1)} — bullish momentum, not overbought`,
-      });
-    } else if (ind.rsi < 45 && ind.rsi > 30) {
-      score -= 15;
-      reasoning.push({
-        label: "RSI",
-        weight: -15,
-        detail: `RSI ${ind.rsi.toFixed(1)} — bearish momentum, not oversold`,
-      });
-    } else if (ind.rsi >= 70) {
-      score -= 5;
-      reasoning.push({
-        label: "RSI",
-        weight: -5,
-        detail: `RSI ${ind.rsi.toFixed(1)} — overbought, reversal risk`,
-      });
-    } else if (ind.rsi <= 30) {
-      score += 5;
-      reasoning.push({
-        label: "RSI",
-        weight: 5,
-        detail: `RSI ${ind.rsi.toFixed(1)} — oversold, bounce possible`,
-      });
-    } else {
-      reasoning.push({
-        label: "RSI",
-        weight: 0,
-        detail: `RSI ${ind.rsi.toFixed(1)} — neutral`,
-      });
-    }
-  }
-
-  // MACD
-  if (ind.macd) {
-    const bullishCross = ind.macd.histogram > 0 && ind.macd.prevHistogram <= 0;
-    const bearishCross = ind.macd.histogram < 0 && ind.macd.prevHistogram >= 0;
-    if (bullishCross) {
-      score += 20;
-      reasoning.push({ label: "MACD", weight: 20, detail: "Fresh bullish crossover" });
-    } else if (bearishCross) {
-      score -= 20;
-      reasoning.push({ label: "MACD", weight: -20, detail: "Fresh bearish crossover" });
-    } else if (ind.macd.histogram > 0) {
-      score += 10;
-      reasoning.push({ label: "MACD", weight: 10, detail: "Histogram positive" });
-    } else if (ind.macd.histogram < 0) {
-      score -= 10;
-      reasoning.push({ label: "MACD", weight: -10, detail: "Histogram negative" });
-    }
-  }
-
-  // Support / Resistance proximity
-  if (ind.support != null && ind.resistance != null) {
-    const range = ind.resistance - ind.support;
-    if (range > 0) {
-      const distToSupport = (ind.lastClose - ind.support) / range;
-      if (distToSupport < 0.2) {
-        score += 15;
-        reasoning.push({
-          label: "S/R",
-          weight: 15,
-          detail: "Price holding near support — buy zone",
-        });
-      } else if (distToSupport > 0.8) {
-        score -= 15;
-        reasoning.push({
-          label: "S/R",
-          weight: -15,
-          detail: "Price near resistance — sell zone",
-        });
-      } else {
-        reasoning.push({
-          label: "S/R",
-          weight: 0,
-          detail: "Price mid-range",
-        });
-      }
-    }
-  }
-
-  // Candlestick pattern on last bar
-  const last = closed[closed.length - 1];
-  const prev = closed[closed.length - 2];
-  if (last && prev) {
-    const body = Math.abs(last.close - last.open);
-    const prevBody = Math.abs(prev.close - prev.open);
-    // Bullish engulfing
-    if (
-      prev.close < prev.open &&
-      last.close > last.open &&
-      last.close > prev.open &&
-      last.open < prev.close &&
-      body > prevBody
-    ) {
-      score += 15;
-      reasoning.push({ label: "Pattern", weight: 15, detail: "Bullish engulfing candle" });
-    } else if (
-      prev.close > prev.open &&
-      last.close < last.open &&
-      last.open > prev.close &&
-      last.close < prev.open &&
-      body > prevBody
-    ) {
-      score -= 15;
-      reasoning.push({ label: "Pattern", weight: -15, detail: "Bearish engulfing candle" });
-    } else {
-      // Pin bar detection
-      const range = last.high - last.low;
-      const upperWick = last.high - Math.max(last.open, last.close);
-      const lowerWick = Math.min(last.open, last.close) - last.low;
-      if (range > 0 && lowerWick / range > 0.6) {
-        score += 8;
-        reasoning.push({ label: "Pattern", weight: 8, detail: "Bullish pin bar (long lower wick)" });
-      } else if (range > 0 && upperWick / range > 0.6) {
-        score -= 8;
-        reasoning.push({ label: "Pattern", weight: -8, detail: "Bearish pin bar (long upper wick)" });
-      }
-    }
-  }
-
-  // Decision thresholds
+  const totalScore = timeframes.reduce((a, t) => a + t.score, 0);
   let decision: Decision = "HOLD";
-  if (score >= 30) decision = "BUY";
-  else if (score <= -30) decision = "SELL";
+  if (totalScore >= 25) decision = "BUY";
+  else if (totalScore <= -25) decision = "SELL";
 
-  const confidence = Math.min(100, Math.round((Math.abs(score) / 100) * 100));
+  const confidence = Math.min(100, Math.round(Math.abs(totalScore)));
 
-  // Entry/SL/TP based on ATR
-  const entry = ind.lastClose;
-  const atrVal = ind.atr ?? entry * 0.001;
+  // Entry from most recent low-TF close (M1 → fallback chain)
+  const liveCandles =
+    data.M1.length ? data.M1 : data.M15.length ? data.M15 : data.M30.length ? data.M30 : data.H1;
+  const entry = liveCandles[liveCandles.length - 1].close;
+
+  // SL/TP sized off H1 ATR for stability
+  const h1Atr = atr(data.H1, 14) ?? entry * 0.001;
   let stopLoss: number;
   let takeProfit: number;
   if (decision === "BUY") {
-    stopLoss = entry - atrVal * 1.5;
-    takeProfit = entry + atrVal * 3;
+    stopLoss = entry - h1Atr * 1.5;
+    takeProfit = entry + h1Atr * 3;
   } else if (decision === "SELL") {
-    stopLoss = entry + atrVal * 1.5;
-    takeProfit = entry - atrVal * 3;
+    stopLoss = entry + h1Atr * 1.5;
+    takeProfit = entry - h1Atr * 3;
   } else {
-    stopLoss = entry - atrVal * 1.5;
-    takeProfit = entry + atrVal * 1.5;
+    stopLoss = entry - h1Atr * 1.5;
+    takeProfit = entry + h1Atr * 1.5;
   }
   const riskReward =
-    decision === "HOLD"
-      ? 1
-      : Math.abs(takeProfit - entry) / Math.abs(entry - stopLoss);
+    decision === "HOLD" ? 1 : Math.abs(takeProfit - entry) / Math.abs(entry - stopLoss);
 
-  const generatedAt = last.time * 1000 + 60 * 60 * 1000; // close time of last H1 candle
+  const generatedAt = Date.now();
   return {
     pair,
-    timeframe: "1h",
     decision,
     confidence,
     entry,
@@ -262,10 +172,7 @@ export function generateSignal(pair: string, closed: Candle[]): GeneratedSignal 
     riskReward,
     generatedAt,
     expiresAt: generatedAt + LOCK_MS,
-    basedOnCandleTime: last.time,
-    indicators: ind,
-    reasoning,
+    timeframes,
+    totalScore,
   };
 }
-
-export const LOCK_DURATION_MS = LOCK_MS;

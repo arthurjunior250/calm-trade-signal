@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   ArrowDownCircle,
@@ -23,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Toaster } from "@/components/ui/sonner";
-import { PAIRS, fetchH1Candles, type PairValue } from "@/lib/market-data";
+import { PAIRS, fetchAllTimeframes, type PairValue } from "@/lib/market-data";
 import {
   LOCK_DURATION_MS,
   generateSignal,
@@ -40,17 +40,17 @@ import {
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Locked H1 Signals — Technical Analysis Bot" },
+      { title: "Multi-Timeframe Locked Signals — Trading Bot" },
       {
         name: "description",
         content:
-          "Generate a single locked BUY/SELL/HOLD trading signal per pair based on the last closed H1 candle. Signal stays fixed for 30 minutes.",
+          "Generate a single locked BUY/SELL/HOLD signal from MN, W1, D1, H4, H1, M30, M15 and M1 candles. Decision is fixed for 10 minutes.",
       },
-      { property: "og:title", content: "Locked H1 Signals — Technical Analysis Bot" },
+      { property: "og:title", content: "Multi-Timeframe Locked Signals" },
       {
         property: "og:description",
         content:
-          "Lock a trading decision to the last closed hourly candle for 30 minutes with entry, SL, TP and full reasoning.",
+          "Combine 8 timeframes into one locked trading decision with entry, SL, TP — fixed for 10 minutes.",
       },
     ],
   }),
@@ -58,6 +58,7 @@ export const Route = createFileRoute("/")({
 });
 
 function formatPrice(n: number, pair: string) {
+  if (!Number.isFinite(n)) return "—";
   if (pair.includes("JPY")) return n.toFixed(3);
   if (pair.startsWith("XAU")) return n.toFixed(2);
   return n.toFixed(5);
@@ -67,6 +68,7 @@ function formatTime(ms: number) {
   return new Date(ms).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
   });
 }
 
@@ -94,14 +96,12 @@ function SignalPage() {
     setHistory(getHistory());
   }, []);
 
-  // Load locked signal whenever pair changes
   useEffect(() => {
     setSignal(getActiveSignal(pair));
   }, [pair]);
 
   const countdown = useCountdown(signal?.expiresAt ?? null);
 
-  // When countdown hits zero, drop the locked signal
   useEffect(() => {
     if (signal && countdown && countdown.ms === 0) {
       setSignal(null);
@@ -117,18 +117,16 @@ function SignalPage() {
     }
     setLoading(true);
     try {
-      const candles = await fetchH1Candles(pair);
-      if (candles.length < 210) {
-        throw new Error(
-          `Not enough closed candles (got ${candles.length}, need 210+).`,
-        );
+      const data = await fetchAllTimeframes(pair);
+      if (!data.H1?.length) {
+        throw new Error("No H1 data returned. Try again in a moment.");
       }
-      const sig = generateSignal(pair, candles);
+      const sig = generateSignal(pair, data);
       setActiveSignal(sig);
       appendHistory(sig);
       setSignal(sig);
       setHistory(getHistory());
-      toast.success(`${sig.decision} locked for 30 minutes`);
+      toast.success(`${sig.decision} locked for 10 minutes`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to generate signal";
       toast.error(msg);
@@ -153,9 +151,11 @@ function SignalPage() {
               <TrendingUp className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold leading-none">Locked H1 Signals</h1>
+              <h1 className="text-lg font-semibold leading-none">
+                Multi-Timeframe Signals
+              </h1>
               <p className="text-xs text-muted-foreground">
-                One decision per pair, fixed for 30 minutes
+                MN · W1 · D1 · H4 · H1 · M30 · M15 · M1 — locked for 10 minutes
               </p>
             </div>
           </div>
@@ -174,8 +174,7 @@ function SignalPage() {
             loading={loading}
             onGenerate={handleGenerate}
           />
-          {signal && <ReasoningCard signal={signal} />}
-          {signal && <IndicatorsCard signal={signal} />}
+          {signal && <TimeframesCard signal={signal} />}
         </div>
 
         <aside className="space-y-6">
@@ -203,7 +202,7 @@ function SignalPage() {
                 </Select>
               </div>
               <p className="text-xs text-muted-foreground">
-                Live H1 candles from Yahoo Finance. No API key required.
+                Live candles from Yahoo Finance across 8 timeframes. No API key.
               </p>
             </CardContent>
           </Card>
@@ -250,10 +249,10 @@ function SignalCard({
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <div>
           <CardTitle className="text-sm font-medium text-muted-foreground">
-            {pair} · H1
+            {pair} · 8-TF consensus
           </CardTitle>
           <p className="mt-1 text-xs text-muted-foreground">
-            Based on the last closed hourly candle
+            Last closed candles on MN → M1
           </p>
         </div>
         <Button
@@ -270,7 +269,7 @@ function SignalCard({
           <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center">
             <CircleDot className="mb-3 h-8 w-8 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              No active signal. Generate one to lock a decision for 30 minutes.
+              No active signal. Generate one to lock a decision for 10 minutes.
             </p>
           </div>
         ) : (
@@ -283,14 +282,16 @@ function SignalCard({
                     {signal.decision}
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">
-                    Confidence {signal.confidence}%
+                    Confidence {signal.confidence}% · Score{" "}
+                    {signal.totalScore >= 0 ? "+" : ""}
+                    {signal.totalScore.toFixed(1)}
                   </div>
                 </div>
               </div>
               <div className="text-right">
                 <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
                   <Lock className="h-3 w-3" />
-                  Locked until {formatTime(signal.expiresAt)}
+                  Locked
                 </div>
                 <div className="mt-1 font-mono text-2xl tabular-nums">
                   {countdown?.label ?? "0:00"}
@@ -315,11 +316,8 @@ function SignalCard({
             </div>
             <Separator />
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span>Signal generated: {formatTime(signal.generatedAt)}</span>
-              <span>
-                Source candle: {formatTime(signal.basedOnCandleTime * 1000)} –{" "}
-                {formatTime(signal.basedOnCandleTime * 1000 + 3_600_000)}
-              </span>
+              <span>Generated: {formatTime(signal.generatedAt)}</span>
+              <span>Expires: {formatTime(signal.expiresAt)}</span>
             </div>
           </div>
         )}
@@ -351,82 +349,79 @@ function Stat({
   );
 }
 
-function ReasoningCard({ signal }: { signal: GeneratedSignal }) {
+function TimeframesCard({ signal }: { signal: GeneratedSignal }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Reasoning</CardTitle>
+        <CardTitle className="text-base">Timeframe breakdown</CardTitle>
       </CardHeader>
       <CardContent>
-        <ul className="space-y-2">
-          {signal.reasoning.map((r, i) => {
-            const tone =
-              r.weight > 0
-                ? "text-primary"
-                : r.weight < 0
-                  ? "text-destructive"
-                  : "text-muted-foreground";
-            return (
-              <li
-                key={i}
-                className="flex items-start justify-between gap-4 rounded-md border border-border/60 px-3 py-2"
-              >
-                <div>
-                  <div className="text-sm font-medium">{r.label}</div>
-                  <div className="text-xs text-muted-foreground">{r.detail}</div>
-                </div>
-                <span className={`font-mono text-sm ${tone}`}>
-                  {r.weight > 0 ? "+" : ""}
-                  {r.weight}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </CardContent>
-    </Card>
-  );
-}
-
-function IndicatorsCard({ signal }: { signal: GeneratedSignal }) {
-  const ind = signal.indicators;
-  const rows = useMemo(
-    () => [
-      ["EMA 20", ind.ema20 != null ? formatPrice(ind.ema20, signal.pair) : "—"],
-      ["EMA 50", ind.ema50 != null ? formatPrice(ind.ema50, signal.pair) : "—"],
-      ["EMA 200", ind.ema200 != null ? formatPrice(ind.ema200, signal.pair) : "—"],
-      ["RSI (14)", ind.rsi != null ? ind.rsi.toFixed(2) : "—"],
-      [
-        "MACD",
-        ind.macd
-          ? `${ind.macd.macd.toFixed(5)} / sig ${ind.macd.signal.toFixed(5)}`
-          : "—",
-      ],
-      ["ATR (14)", ind.atr != null ? ind.atr.toFixed(5) : "—"],
-      [
-        "Support",
-        ind.support != null ? formatPrice(ind.support, signal.pair) : "—",
-      ],
-      [
-        "Resistance",
-        ind.resistance != null ? formatPrice(ind.resistance, signal.pair) : "—",
-      ],
-    ],
-    [ind, signal.pair],
-  );
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Indicators</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-          {rows.map(([k, v]) => (
-            <div key={k} className="flex justify-between border-b border-border/40 py-1">
-              <span className="text-muted-foreground">{k}</span>
-              <span className="font-mono tabular-nums">{v}</span>
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase text-muted-foreground">
+              <tr className="border-b border-border/60">
+                <th className="py-2 text-left font-medium">TF</th>
+                <th className="py-2 text-left font-medium">Bias</th>
+                <th className="py-2 text-right font-medium">RSI</th>
+                <th className="py-2 text-right font-medium">MACD</th>
+                <th className="py-2 text-right font-medium">EMA20/50</th>
+                <th className="py-2 text-right font-medium">Weight</th>
+                <th className="py-2 text-right font-medium">Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signal.timeframes.map((t) => {
+                const biasColor =
+                  t.bias === 1
+                    ? "text-primary"
+                    : t.bias === -1
+                      ? "text-destructive"
+                      : "text-muted-foreground";
+                const ema =
+                  t.ema20 != null && t.ema50 != null
+                    ? t.ema20 > t.ema50
+                      ? "↑"
+                      : "↓"
+                    : "—";
+                return (
+                  <tr key={t.tf} className="border-b border-border/30">
+                    <td className="py-2 font-medium">{t.tf}</td>
+                    <td className={`py-2 ${biasColor}`}>{t.note}</td>
+                    <td className="py-2 text-right font-mono tabular-nums">
+                      {t.rsi != null ? t.rsi.toFixed(1) : "—"}
+                    </td>
+                    <td
+                      className={`py-2 text-right font-mono tabular-nums ${
+                        t.macdHist == null
+                          ? ""
+                          : t.macdHist > 0
+                            ? "text-primary"
+                            : "text-destructive"
+                      }`}
+                    >
+                      {t.macdHist != null ? t.macdHist.toExponential(1) : "—"}
+                    </td>
+                    <td className="py-2 text-right">{ema}</td>
+                    <td className="py-2 text-right text-muted-foreground">
+                      {t.weight}
+                    </td>
+                    <td
+                      className={`py-2 text-right font-mono tabular-nums ${
+                        t.score > 0
+                          ? "text-primary"
+                          : t.score < 0
+                            ? "text-destructive"
+                            : "text-muted-foreground"
+                      }`}
+                    >
+                      {t.score >= 0 ? "+" : ""}
+                      {t.score.toFixed(1)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </CardContent>
     </Card>
