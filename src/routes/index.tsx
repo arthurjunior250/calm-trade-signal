@@ -531,6 +531,7 @@ function VoteTallyCard({ signal }: { signal: GeneratedSignal }) {
   );
 }
 
+function HistoryCard({
   history,
   onClear,
 }: {
